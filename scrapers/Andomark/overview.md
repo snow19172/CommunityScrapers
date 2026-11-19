@@ -8,11 +8,14 @@ Scraper has been tested on 2026-09-14
 | Big Boobies Club         | https://bigboobiesclub.com/updates/RavenswallowsFunGirl.html                                                                 | oldStyle                       |
 | Big Bouncy Babes         | https://bigbouncybabes.com/updates/WillTileXXXRoomie-KAYK920.html                                                            | oldStyle                       |
 | Big Toy XXX              | https://bigtoyxxx.com/updates/SofieMarieXXXTheUltimate6GirlStrapOnOrgy.html                                                  | oldStyle                       |
+| Black Bull Challenge     | https://blackbullchallenge.com/scenes/Fuck-My-Perfect-Round-Juicy-Ass_vids.html                                              | newStyle                       |
 | Bondage Legend           | https://bondagelegend.com/updates/DOILAStrapOnDivas.html                                                                     | oldStyle                       |
 | Brad Sterling            | https://bradsterling.elxcomplete.com/updates/BradSterlingWelcomeToMyRoomfAlixLynx.html                                       | oldStyle                       |
 | Brit Studio              | https://britstudio.xxx/scenes/Rae-Fucks-Herself-With-A-Dildo-Until-She-Cums_vids.html                                        | newStyle                       |
+| Brittany Andrews         | https://brittanyandrews.com/updates/Newly-Single-and-Ready-for-Cock.html                                                     | oldStyle                       |
 | CFNM Games               | https://www.cfnmgames.com/scenes/bj-challenge_vids.html                                                                      | proSceneWithImgFallbackScraper |
 | Calisa Bliss             | https://calisabliss.com/updates/Experimental-Treatment.html                                                                  | oldStyle                       |
+| Cannon Productions       | https://cannonprod.com/scenes/Kylei-Ellish-Kylei-Takes-On-Dani-Big-Dick_vids.html                                            | newStyle                       |
 | Charlie Forde            | https://charlieforde.com/scenes/Bump-In-The-Night_vids.html                                                                  | newStyle                       |
 | Charm Models             | https://charmmodels.net/updates/Selena-I-love-myself.html                                                                    | setpreviewStyle                |
 | ChocolatePOV             | https://chocolatepov.com/updates/WillTileXXXSoles-SHLU1119.html                                                              | oldStyle                       |
@@ -35,6 +38,7 @@ Scraper has been tested on 2026-09-14
 | Granny Cums Here         | https://www.grannycumshere.com/tour/updates/4GRANNIESandsomeBBC.html                                                         | oldStyle                       |
 | HollyHotWife             | https://hollyhotwife.elxcomplete.com/updates/SofieMarieXXXAVNHollyHotwifeBBC.html                                            | oldStyle                       |
 | Hot Wife Rio             | https://hotwiferio.com/newtour/updates/busty-beauties.html                                                                   | oldStyle                       |
+| Hungarian Honeys         | https://www.hungarianhoneys.com/tour/updates/Stunning-In-A-Bikini-Video.html                                                 | oldStyle                       |
 | International Nudes      | https://internationalnudes.com/updates/RavenswallowsFunGirl.html                                                             | oldStyle                       |
 | Johnny Goodluck          | https://johnnygoodluck.com/updates/Clown-Threesome.html                                                                      | oldStyle                       |
 | JustGoodSex              | https://justgoodsex.com/scenes/Reuniting-With-Kayla_vids.html                                                                | newStyle                       |
@@ -69,6 +73,7 @@ Scraper has been tested on 2026-09-14
 | Terra Patrick            | https://terapatrick.com/access/scenes/Naked-Naughty-In-The-Shower_highres.html?buy=1                                         | proSceneWithImgFallbackScraper |
 | Test Shoots              | https://test-shoots.com/updates/Adorable-babe-Francheska-nude-casting-photo-session.html                                     | setpreviewStyle                |
 | TexasPattiUSA            | https://texaspattiusa.com/updates/TPUSA21-31Shay-Double-BJ.html                                                              | oldStyle                       |
+| That Fetish Girl         | https://thatfetishgirl.com/scenes/Flown-Out-For-The-Weekend_vids.html                                                        | newStyle                       |
 | VanillaPOV               | https://vanillapov.com/updates/Hotwife-Sofie-Marie-Hooks-Up-With-MySecretLifePOV.html                                        | oldStyle                       |
 | WhoreBaitHals            | https://www.whorebaithals.com/tour/updates/Paris-buys-a-NEW-Custom-TRUCK.html                                                | oldStyle                       |
 | Will Tile XXX            | https://willtilexxx.com/updates/Neighbor-CICO717.html                                                                        | oldStyle                       |

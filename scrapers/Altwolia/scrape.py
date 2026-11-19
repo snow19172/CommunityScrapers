@@ -8,7 +8,7 @@ from functools import lru_cache
 from typing import Any
 
 from Altwolia import domains
-from Altwolia.utils import without_scene_number
+from Altwolia.utils import same_title, without_scene_number
 from py_common import log
 from py_common.deps import ensure_requirements
 from py_common.types import (
@@ -20,8 +20,9 @@ from py_common.types import (
 )
 from py_common.util import (
     dig,
-    feet_to_cm,
     guess_nationality,
+    imperial_length_to_cm,
+    is_own_url,
     is_valid_url,
     lb_to_kg,
     scraper_args,
@@ -130,6 +131,60 @@ def scene_url(site: str, sitename: str, url_title: str, clip_id: str) -> str:
     return f"https://www.{site.lower()}.com/en/video/{sitename.lower()}/{url_title}/{clip_id}"
 
 
+def own_site_url(api_scene: dict[str, Any], site: str) -> str | None:
+    "Scenes listed only on a retired sub-site still render under the network's own site"
+    if (
+        (sitename := api_scene.get("sitename"))
+        and (url_title := api_scene.get("url_title"))
+        and (clip_id := api_scene.get("clip_id"))
+    ):
+        return scene_url(site, sitename, url_title, clip_id)
+    return None
+
+
+def hub_performer_url(api_performer: dict[str, Any], site: str, hub: str) -> str | None:
+    "Performers listed only on retired sites still render on the network's hub"
+    available_on = api_performer.get("availableOnSite") or []
+    if (
+        any(available_on)
+        and performer_site(api_performer, site) not in available_on
+        and (url_name := api_performer.get("url_name"))
+        and (actor_id := api_performer.get("actor_id"))
+    ):
+        return performer_url(hub, url_name, actor_id)
+    return None
+
+
+# StashDB's names for partner channels, where the API spells them differently
+PARTNER_STUDIOS = {
+    "3rdDegreeFilms": "3rd Degree",
+    "Addicted2Girls": "Addicted 2 Girls",
+    "AdultTime": "Adult Time",
+    "Adulttime": "Adult Time",
+    "ASGmax": "ASGmax Originals",
+    "Chaos Men": "ChaosMen",
+    "Chaosmen": "ChaosMen",
+    "Gloryhole": "GloryHole",
+    "Hardx": "HardX",
+    "ZeroToleranceFilms": "Zero Tolerance Films",
+}
+
+# Partner channels that label a kind of content rather than a studio
+NOT_A_PARTNER = {"Bonus Content"}
+
+
+def partner_studio(api_object: dict[str, Any]) -> dict[str, str] | None:
+    "The studio of a release that a network's site reposts from another studio"
+    for channel in api_object.get("channels") or []:
+        if (
+            channel.get("type") == "Partner Channel"
+            and (name := (channel.get("name") or "").strip())
+            and name not in NOT_A_PARTNER
+        ):
+            return {"name": PARTNER_STUDIOS.get(name, name)}
+    return None
+
+
 def name_values_as_csv(objects: list[dict[str, Any]]) -> str:
     return ", ".join(name for obj in objects if (name := obj.get("name")))
 
@@ -172,11 +227,11 @@ def to_scraped_performer(api_performer: dict[str, Any], site: str) -> ScrapedPer
     if alternate_names := dig(api_performer, "attributes", "alternate_names"):
         performer["aliases"] = alternate_names.strip()
     if height := dig(api_performer, "attributes", "height"):
-        performer["height"] = feet_to_cm(height.strip())
+        performer["height"] = imperial_length_to_cm(height.strip())
     if weight := dig(api_performer, "attributes", "weight"):
         performer["weight"] = lb_to_kg(weight.strip())
     if endowment := dig(api_performer, "attributes", "endowment"):
-        performer["penis_length"] = feet_to_cm("0'" + endowment.strip())
+        performer["penis_length"] = imperial_length_to_cm(endowment.strip())
     if home := dig(api_performer, "attributes", "home"):
         performer["country"] = guess_nationality(home.strip())
     if api_performer.get("has_pictures") and (
@@ -187,8 +242,18 @@ def to_scraped_performer(api_performer: dict[str, Any], site: str) -> ScrapedPer
     if (url_name := api_performer.get("url_name")) and (
         actor_id := api_performer.get("actor_id")
     ):
-        performer["urls"] = [performer_url(site, url_name, actor_id)]
+        performer["urls"] = [
+            performer_url(performer_site(api_performer, site), url_name, actor_id)
+        ]
     return performer
+
+
+def performer_site(api_performer: dict[str, Any], site: str) -> str:
+    # Shared network indexes return performers whose profile only exists on their own sites
+    available_on = api_performer.get("availableOnSite") or []
+    if site in available_on:
+        return site
+    return next((other for other in available_on if domains.has_own_site(other)), site)
 
 
 def group_from_api_scene(api_scene: dict[str, Any], site: str) -> ScrapedGroup:
@@ -260,6 +325,47 @@ def largest_scene_image(api_scene: dict[str, Any]) -> str | None:
     return None
 
 
+@lru_cache
+def release_date_on(clip_id: int | str, site: str) -> str | None:
+    # Each site keeps its own record of a clip, with its own release date
+    if not (client := get_search_client(site)):
+        return None
+    response = client.search_single_index(
+        index_name="all_scenes",
+        search_params={
+            "attributesToHighlight": [],
+            "attributesToRetrieve": ["release_date"],
+            "filters": f"clip_id:{clip_id}",
+            "hitsPerPage": 1,
+        },
+    )
+    return next(
+        (date for hit in response.hits if (date := hit.to_dict().get("release_date"))),
+        None,
+    )
+
+
+def first_release_date(api_scene: dict[str, Any], site: str) -> str | None:
+    # Some sites re-release each other's scenes (Falcon re-releases Raging Stallion and NakedSword scenes years later)
+    # and compilations re-release a site's own scenes under a new clip_id: the earliest copy approximates the original release
+    dates: list[str] = []
+    if clip_id := api_scene.get("clip_id"):
+        dates += [
+            date
+            for other in api_scene.get("availableOnSite", [])
+            if other != site
+            and domains.has_own_site(other)
+            and (date := release_date_on(clip_id, other))
+        ]
+    if (
+        api_scene.get("compilation") == "1"
+        and (source_clip_id := api_scene.get("source_clip_id"))
+        and (date := release_date_on(source_clip_id, site))
+    ):
+        dates.append(date)
+    return min(dates, default=None)
+
+
 def to_scraped_scene(api_scene: dict[str, Any], site: str) -> ScrapedScene:
     scene: ScrapedScene = {}
     if clip_id := api_scene.get("clip_id"):
@@ -272,6 +378,10 @@ def to_scraped_scene(api_scene: dict[str, Any], site: str) -> ScrapedScene:
         scene["urls"] = urls
     if release_date := api_scene.get("release_date"):
         scene["date"] = release_date
+        if (
+            first_release := first_release_date(api_scene, site)
+        ) and first_release < release_date:
+            scene["production_date"] = first_release
     if image := largest_scene_image(api_scene):
         scene["image"] = f"{IMAGE_CDN}/movies{image}"
     if studio_name := api_scene.get("studio_name"):
@@ -740,8 +850,11 @@ def scene_from_fragment(
         [ScrapedScene, dict[str, Any]], ScrapedScene
     ] = default_postprocess,
 ) -> ScrapedScene | None:
-    if urls := fragment.get("urls"):
-        return scene_from_url(urls[0], site, fragment, postprocess)
+    for url in fragment.get("urls") or []:
+        if is_own_url(url) and (
+            scene := scene_from_url(url, site, fragment, postprocess)
+        ):
+            return scene
     if code := fragment.get("code"):
         return scene_from_id(code, site, fragment, postprocess)
     if (title := fragment.get("title")) and (
@@ -750,11 +863,7 @@ def scene_from_fragment(
         # The ranking compares API titles, which lack any scene number the postprocess
         # appended, so every scene of a movie ranks the same: prefer an exact match
         return next(
-            (
-                s
-                for s in scenes
-                if (s.get("title") or "").casefold() == title.casefold()
-            ),
+            (s for s in scenes if same_title(s.get("title") or "", title)),
             scenes[0],
         )
     return None
@@ -767,8 +876,9 @@ def gallery_from_fragment(
         [ScrapedGallery, dict[str, Any]], ScrapedGallery
     ] = default_postprocess,
 ) -> ScrapedGallery | None:
-    if url := fragment.get("url"):
-        return gallery_from_url(url, site, postprocess)
+    for url in fragment.get("urls") or []:
+        if is_own_url(url) and (gallery := gallery_from_url(url, site, postprocess)):
+            return gallery
     if code := fragment.get("code"):
         return gallery_from_set_id(code, site, postprocess)
     if (title := fragment.get("title")) and (
@@ -785,8 +895,11 @@ def performer_from_fragment(
         [ScrapedPerformer, dict[str, Any]], ScrapedPerformer
     ] = default_postprocess,
 ) -> ScrapedPerformer | None:
-    if url := fragment.get("url") or next(iter(fragment.get("urls") or []), None):
-        return performer_from_url(url, site, postprocess)
+    for url in fragment.get("urls") or []:
+        if is_own_url(url) and (
+            performer := performer_from_url(url, site, postprocess)
+        ):
+            return performer
     # Without a URL only an exact name match is safe to follow
     if (
         (name := fragment.get("name"))

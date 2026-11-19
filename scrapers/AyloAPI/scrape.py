@@ -8,12 +8,11 @@ from html import unescape
 from typing import Any
 from urllib.parse import urlparse
 
-import requests
-
 from AyloAPI import domains
 from AyloAPI.slugger import slugify
 from py_common import log
 from py_common.config import get_config
+from py_common.deps import ensure_requirements
 from py_common.types import (
     ScrapedGallery,
     ScrapedGroup,
@@ -22,7 +21,10 @@ from py_common.types import (
     ScrapedStudio,
     ScrapedTag,
 )
-from py_common.util import dig, guess_nationality, scraper_args
+from py_common.util import dig, guess_nationality, is_own_url, scraper_args
+
+ensure_requirements("requests")
+import requests
 
 config = get_config(
     default="""
@@ -35,10 +37,17 @@ scrape_markers = False
 # Minimum similarity ratio to consider a match when searching
 minimum_similarity = 0.75
 
+# Use the largest resized image when the original is over StashDB's 10 MiB upload limit
+limit_image_size = True
+
 # Debug mode will save the latest API response to disk
 debug = False
 """
 )
+
+
+# StashDB rejects image uploads over this
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
 
 
 def default_postprocess(obj: Any, _) -> Any:
@@ -128,6 +137,9 @@ def __raw_request(url, headers) -> requests.Response:
 def __api_request(url: str, headers: dict[str, str]) -> Any:
     result = __raw_request(url, headers)
     api_response = result.json()
+    # Validation errors (like search terms under 3 characters) come wrapped in a dict
+    if isinstance(api_response, dict) and "result" not in api_response:
+        api_response = api_response.get("message") or [api_response]
     if isinstance(api_response, list):
         api_search_errors = "\n- ".join(
             json.dumps(res, indent=None) for res in api_response
@@ -146,7 +158,10 @@ def _create_headers_for(domain: str) -> dict[str, str]:
     # If we haven't stored a token we must provide a function to get one
     def get_instance_token(url: str) -> str | None:
         r = __raw_request(url, {"User-Agent": config.user_agent})
-        if r and (token := r.cookies.get("instance_token")):
+        # Sites on the newer frontend only embed the token in the page, not in a cookie
+        if token := r.cookies.get("instance_token") or (
+            (m := re.search(r'"jwt":"(eyJ[^"]+)"', r.text)) and m[1]
+        ):
             return token
         log.error(
             f"Failed to get instance_token from '{url}': "
@@ -197,8 +212,10 @@ def _construct_performer_url(api_result: dict[str, Any], site: str) -> str:
 
 ## Helper functions for the objects returned from Aylo's API
 def get_studio(api_object: dict[str, Any]) -> ScrapedStudio | None:
-    studio_name = dig(api_object, "collections", 0, "name")
-    parent_name = dig(api_object, "brandMeta", ("displayName", "name", "shortName"))
+    studio_name = (dig(api_object, "collections", 0, "name") or "").strip()
+    parent_name = (
+        dig(api_object, "brandMeta", ("displayName", "name", "shortName")) or ""
+    ).strip()
     if studio_name:
         if parent_name and parent_name.lower() != studio_name.lower():
             return {
@@ -329,6 +346,25 @@ def to_scraped_performer(
     return performer
 
 
+def full_size(image: str) -> str:
+    """
+    The original of a resized image URL, or the resized one if the original
+    is too large for StashDB and limit_image_size is set
+    """
+    original = re.sub(r"/m=[^/]+", "", image)
+    if not config.limit_image_size:
+        return original
+    try:
+        response = requests.head(original, timeout=10, allow_redirects=True)
+        size = int(response.headers.get("content-length", 0))
+    except (requests.RequestException, ValueError):
+        return original
+    if size > MAX_IMAGE_BYTES:
+        log.debug(f"Original image is {size / 2**20:.1f} MiB, using {image}")
+        return image
+    return original
+
+
 def to_scraped_group(group_from_api: dict[str, Any]) -> ScrapedGroup:
     if group_from_api["type"] not in ("movie", "serie"):
         wrong_type = group_from_api["type"]
@@ -347,9 +383,9 @@ def to_scraped_group(group_from_api: dict[str, Any]) -> ScrapedGroup:
         group["synopsis"] = synopsis
 
     if front_image := dig(group_from_api, "images", "cover", "0", "xx", "url"):
-        group["front_image"] = re.sub(r"/m=[^/]+", "", front_image)
+        group["front_image"] = full_size(front_image)
     elif poster := dig(group_from_api, "images", "poster", "0", "xx", "url"):
-        group["front_image"] = re.sub(r"/m=[^/]+", "", poster)
+        group["front_image"] = full_size(poster)
 
     if date := dig(group_from_api, "dateReleased"):
         group["date"] = datetime.strptime(date, "%Y-%m-%dT%H:%M:%S%z").strftime(
@@ -404,7 +440,7 @@ def to_scraped_scene(scene_from_api: dict[str, Any]) -> ScrapedScene:
         ("xx", "xl", "lg", "md", "sm", "xs"),
         "url",
     ):
-        scene["image"] = re.sub(r"/m=[^/]+", "", image)
+        scene["image"] = full_size(image)
 
     if (
         length := dig(scene_from_api, "videos", "mediabook", "length")
@@ -418,7 +454,7 @@ def to_scraped_scene(scene_from_api: dict[str, Any]) -> ScrapedScene:
         scene["studio"] = studio
 
     if config.scrape_markers and (markers := scene_from_api.get("timeTags")):
-        scene["markers"] = [to_marker(m) for m in markers]  # pyright: ignore[reportGeneralTypeIssues]
+        scene["markers"] = [to_marker(m) for m in markers]  # ty: ignore[invalid-key]
 
     return scene
 
@@ -889,8 +925,8 @@ def performer_search(
 
 def fragment_urls(fragment: dict[str, Any]) -> list[str]:
     """
-    The fragment's URLs, those on domains we already hold a token for first:
-    an unknown domain costs a request to the URL itself to look for one
+    The fragment's URLs on this scraper's own sites, those on domains we already hold
+    a token for first: an unknown domain costs a request to the URL itself to look for one
     """
     known = set(domains.all_domains())
 
@@ -898,7 +934,8 @@ def fragment_urls(fragment: dict[str, Any]) -> list[str]:
         host = urlparse(url).netloc.split(".")
         return len(host) > 1 and host[-2] in known
 
-    return sorted(fragment.get("urls") or [], key=lambda url: not known_domain(url))
+    own = filter(is_own_url, fragment.get("urls") or [])
+    return sorted(own, key=lambda url: not known_domain(url))
 
 
 def scene_from_fragment(
@@ -995,7 +1032,7 @@ def performer_from_fragment(
 ) -> ScrapedPerformer | None:
     """
     Scrapes a performer from a fragment, which must contain one of the following:
-    - urls: URLs of the performer page (anywhere in the Aylo network)
+    - urls: URLs of the performer page on this scraper's own sites
     - name: the name of the performer
 
     If domains is provided it will only search those domains,
@@ -1028,7 +1065,7 @@ def main_scraper():
     match op, args:
         case "gallery-by-url", {"url": url} if url:
             result = gallery_from_url(url)
-        case "gallery-by-fragment":
+        case "gallery-by-fragment", args:
             domains = args.get("extra", None)
             result = gallery_from_fragment(args, search_domains=domains)
         case "scene-by-url", {"url": url} if url:

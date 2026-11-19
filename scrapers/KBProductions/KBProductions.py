@@ -6,11 +6,13 @@ import urllib.parse
 from html.parser import HTMLParser
 from unicodedata import normalize
 
-import requests
-
 from py_common import log
+from py_common.deps import ensure_requirements
 from py_common.types import ScrapedGroup, ScrapedPerformer, ScrapedScene, ScrapedStudio
 from py_common.util import dig, guess_nationality, replace_all, scraper_args
+
+ensure_requirements("requests")
+import requests
 
 # Maps the `site_domain` key from the API
 # to studio names currently used on StashDB
@@ -22,8 +24,10 @@ studio_map = {
     "amazingfilms.com": "Amazing Films",
     "analonly.com": "Anal Only",
     "analjesse.com": "Anal Jesse",
+    "beddableboys.com": "Beddable Boys",
     "bemefi.com": "Bemefi",
     "benefitmonkey.com": "Benefit Monkey",
+    "bestbareback.com": "Best Bareback",
     "biggulpgirls.com": "Big Gulp Girls",
     "bjraw.com": "BJ Raw",
     "blackbullchallenge.com": "Black Bull Challenge",
@@ -47,15 +51,21 @@ studio_map = {
     "downblousejerk.com": "Downblouse Jerk",
     "dripdropprod.net": "DripDrip",
     "edwardjames.com": "Edward James",
+    "emonetwork.com": "EmoNetwork",
+    "emotwinks.com": "Emo Twinks",
+    "exposedemos.com": "Exposed Emos",
     "facialsforever.com": "Facials Forever",
     "fantasypov.com": "FantasyPOV",
     "freakmobhardcore.com": "FreakMob Hardcore",
     "freakmobmedia.com": "FreakMob Media",
+    "gaylifenetwork.com": "GayLifeNetwork",
     "gogobarauditions.com": "Gogo Bar Auditions",
     "gogoworldporn.com": "GoGo World Porn",
     "gotfilled.com": "Got Filled",
     "hardwerk.com": "HardWerk",
     "hobybuchanon.com": "Hoby Buchanon",
+    "homoemo.com": "Homo Emo",
+    "homoscene.com": "Homo Scene",
     "inkedpov.com": "Inked POV",
     "inmelanin.com": "InMelanin",
     "inserted.com": "Inserted",
@@ -63,6 +73,7 @@ studio_map = {
     "tour.javhub.com": "JavHub",
     "jizzaddiction.com": "Jizz Addiction",
     "joeschmoevideos.com": "Joe Schmoe Videos",
+    "johnnyrapid.com": "Johnny Rapid",
     "labelladx.com": "La BellaDX",
     "lildsplayhouse.com": "Lil D's Playhouse",
     "slutwife.labelladx.com": "La BellaDX",
@@ -70,6 +81,7 @@ studio_map = {
     "legendaryx.com": "Legendary X",
     "lezkey.com": "LezKey",
     "lingerietales.com": "Lingerie Tales",
+    "lollipoptwinks.com": "Lollipop Twinks",
     "lucidflix.com": "LucidFlix",
     "lukecooperx.com": "Luke CooperX",
     "machofactory.com": "Macho Factory",
@@ -83,6 +95,7 @@ studio_map = {
     "nikkizee.com": "Nikki Zee",
     "nylonperv.com": "Nylon Perv",
     "nympho.com": "Nympho",
+    "pascalssubsluts.com": "Pascals Sub Sluts",
     "passionpov.com": "PassionPOV",
     "pervect.com": "Pervect",
     "poundedpetite.com": "Pounded Petite",
@@ -96,6 +109,7 @@ studio_map = {
     "members.rickysroom.com": "Ricky's Room",
     "s3xus.com": "S3XUS",
     "seska.com": "Seska",
+    "seska.paysite.com": "Seska",
     "severesexfilms.com": "Severe Sex Films",
     "sextapes.com": "SexTapes",
     "sexymodernbull.com": "Sexy Modern Bull",
@@ -104,6 +118,7 @@ studio_map = {
     "sidechick.com": "SIDECHICK",
     "suckthisdick.com": "Suck This Dick",
     "swallowed.com": "Swallowed",
+    "teachtwinks.com": "Teach Twinks",
     "theartemixxx.com": "The ArtemiXXX",
     "topwebmodels.com": "Top Web Models",
     "topwebmodels-interviews.com": "TWM Interviews",
@@ -115,6 +130,8 @@ studio_map = {
     "karlsworld.toughlovex.com": "ToughLoveX",
     "toughlove.toughlovex.com": "ToughLoveX",
     "trueanal.com": "True Anal",
+    "twinklight.tv": "Twinklight",
+    "twinkylicious.com": "Twinkylicious",
     "twmclassics.com": "TWM Classics",
     "upskirtjerk.com": "Upskirt Jerk",
     "vrhush.com": "VRHush",
@@ -133,9 +150,15 @@ NO_SITE_OF_THEIR_OWN = {
     "3rdwheel.toughlovex.com",
     "blakemason-after-hours.com",
     "drkarl.toughlovex.com",
+    "emotwinks.com",
+    "exposedemos.com",
+    "homoemo.com",
+    "homoscene.com",
     "karlskasting.toughlovex.com",
     "karlsworld.toughlovex.com",
+    "lollipoptwinks.com",
     "premium-nickmarxx.com",
+    "seska.paysite.com",
     "slutwife.labelladx.com",
     "toughlove.toughlovex.com",
     "topwebmodels-interviews.com",
@@ -152,15 +175,21 @@ def lbs_to_kg(lbs):
     return str(round(float(lbs) / 2.2046))
 
 
+def to_seconds(value) -> int | None:
+    "Seconds from 1810.24, '1810.24', '01:17' or '1:02:03'; None if unparseable or 0"
+    parts = str(value or "").strip().split(":")
+    if len(parts) > 3 or not all(re.fullmatch(r"\d+(\.\d+)?", p) for p in parts):
+        return None
+    return round(sum(float(p) * 60**i for i, p in enumerate(reversed(parts)))) or None
+
+
 def clean_url(url: str) -> str:
     # remove any query parameters
     return re.sub(r"\?.*", "", url)
 
 
-# Some sites only work with the `tour.` subdomain
-def fix_url(url: str) -> str:
-    url = url.replace("suckthisdick.com", "hobybuchanon.com")
-    url = url.replace("api.nyseedxxx.com", "nyseedxxx.com")
+# Some sites only work with the `tour.` subdomain: their bare host 404s
+def tour_url(url: str) -> str:
     tour_domain = (
         "nympho",
         "allanal",
@@ -171,13 +200,25 @@ def fix_url(url: str) -> str:
         "facialsforever",
         "mariskax",
         "poundedpetite",
+        "povperv",
+        "purgatoryx",
         "seska",
         "swallowed",
         "shesbrandnew",
         "topwebmodels",
+        "toughlovex",
         "trueanal",
     )
-    return re.sub(rf"//(?<!tour\.)({'|'.join(tour_domain)})", r"//tour.\1", url)
+    # anchored so archived copies (web.archive.org/web/.../https://site/...) stay as given
+    return re.sub(
+        rf"^(https?://)(?:www\.)?({'|'.join(tour_domain)})\.", r"\1tour.\2.", url
+    )
+
+
+def fix_url(url: str) -> str:
+    url = url.replace("suckthisdick.com", "hobybuchanon.com")
+    url = url.replace("api.nyseedxxx.com", "nyseedxxx.com")
+    return tour_url(url)
 
 
 def strip_tags(html: str) -> str:
@@ -197,7 +238,7 @@ def strip_tags(html: str) -> str:
 
     s = ToPlainText()
     s.feed(html)
-    return normalize("NFKD", s.get_data())
+    return normalize("NFKD", s.get_data()).strip()
 
 
 def fetch_page_props(url: str) -> dict | None:
@@ -231,7 +272,8 @@ def site_url(site: str, page_url: str) -> str:
 
 
 def make_performer_url(slug: str, site: str, page_url: str) -> str:
-    return f"{site_url(site, page_url)}/models/{slug}"
+    path = "sluts" if site == "pascalssubsluts.com" else "models"
+    return f"{site_url(site, page_url)}/{path}/{slug}"
 
 
 def get_studio(site: str, page_url: str) -> ScrapedStudio:
@@ -246,18 +288,20 @@ def get_studio(site: str, page_url: str) -> ScrapedStudio:
 
 
 def get_code(site: str, raw_scene: dict) -> str | None:
+    # A prefix without a number (bbb_lezlie_robert01) is just the brand, not a code
     if (scene_code := dig(raw_scene, "scene_code")) and (
-        match := re.match(r"^([^_]+).*$", scene_code)
+        match := re.match(r"^([^_]*\d[^_]*)", scene_code)
     ):
         return match.group(1)
 
     if (trailer := dig(raw_scene, "trailer_url")) and (
-        match := re.search(r"^(\w{2,3}\d{4})", trailer.split('/')[-1])
+        match := re.search(r"^(\w{2,3}\d{4})", trailer.split("/")[-1])
     ):
         return match.group(1)
 
     if _id := dig(raw_scene, "id"):
         return str(_id)
+
 
 def looks_like_image(url: str) -> bool:
     # Some CDNs serve images from extensionless paths with a generic content-type
@@ -267,7 +311,10 @@ def looks_like_image(url: str) -> bool:
     except requests.RequestException:
         return False
     header = r.content
-    return header.startswith((b"\xff\xd8\xff", b"\x89PNG", b"GIF8")) or header[8:12] == b"WEBP"
+    return (
+        header.startswith((b"\xff\xd8\xff", b"\x89PNG", b"GIF8"))
+        or header[8:12] == b"WEBP"
+    )
 
 
 def torso_variant(url: str) -> str:
@@ -279,9 +326,15 @@ def torso_variant(url: str) -> str:
         return torso_image_url
     return url
 
+
 def to_scraped_performer(raw_performer: dict, page_url: str) -> ScrapedPerformer:
     # Convert dict keys to lower case because, of couse, they can come in differently depending on studio.
     raw_performer = {key.lower(): value for key, value in raw_performer.items()}
+    # The gay network hubs keep the stats as label/value pairs and omit gender and site_domain
+    raw_performer |= {
+        label.lower(): value for label, value in raw_performer.get("fields") or []
+    }
+    site = raw_performer.get("site_domain") or urllib.parse.urlparse(page_url).netloc
 
     # Studios that do not use units for measurements, but are obviously not metric.
     STUDIO_USES_IMPERIAL = [
@@ -293,25 +346,21 @@ def to_scraped_performer(raw_performer: dict, page_url: str) -> ScrapedPerformer
 
     performer: ScrapedPerformer = {
         "name": raw_performer["name"],
-        "gender": raw_performer["gender"],
-        "urls": [
-            make_performer_url(
-                raw_performer["slug"], raw_performer["site_domain"], page_url
-            )
-        ],
-        "tags": [],
+        "urls": [make_performer_url(raw_performer["slug"], site, page_url)],
     }
+    tags = []
 
-    if image := raw_performer.get("thumb"):
-        performer["images"] = [torso_variant(image)]
-    elif image := raw_performer.get("thumbnail"):
+    if gender := raw_performer.get("gender"):
+        performer["gender"] = gender
+
+    if image := raw_performer.get("thumb") or raw_performer.get("thumbnail"):
         image = re.sub(r"^//", "https://", image)
         performer["images"] = [torso_variant(image)]
 
-    if bio := raw_performer.get("bio"):
-        performer["details"] = strip_tags(bio)
-    elif details := raw_performer.get("details"):
-        performer["details"] = strip_tags(details)
+    if details := strip_tags(
+        raw_performer.get("bio") or raw_performer.get("details") or ""
+    ):
+        performer["details"] = details
 
     if (birthdate := raw_performer.get("birthdate")) and birthdate != "1969-12-31":
         performer["birthdate"] = birthdate
@@ -353,9 +402,7 @@ def to_scraped_performer(raw_performer: dict, page_url: str) -> ScrapedPerformer
         w := re.match(r"^([\d\.]+)$", weight_nounits)
     ):
         performer["weight"] = (
-            lbs_to_kg(w.group(1))
-            if raw_performer["site_domain"] in STUDIO_USES_IMPERIAL
-            else str(w.group(1))
+            lbs_to_kg(w.group(1)) if site in STUDIO_USES_IMPERIAL else str(w.group(1))
         )
 
     if (penis_nounits := raw_performer.get("dick size")) and (
@@ -363,7 +410,7 @@ def to_scraped_performer(raw_performer: dict, page_url: str) -> ScrapedPerformer
     ):
         performer["penis_length"] = (
             feetinches_to_cm(0, s.group(1))
-            if raw_performer["site_domain"] in STUDIO_USES_IMPERIAL
+            if site in STUDIO_USES_IMPERIAL
             else str(s.group(1))
         )
 
@@ -383,14 +430,16 @@ def to_scraped_performer(raw_performer: dict, page_url: str) -> ScrapedPerformer
         performer["urls"].append(f"https://www.instagram.com/{instagram}")
 
     if "orientation" in raw_performer:
-        performer["tags"].append({"name": raw_performer["orientation"]})
+        tags.append({"name": raw_performer["orientation"]})
     if "sexual positions" in raw_performer:
         for x in raw_performer["sexual positions"].split(" "):
-            performer["tags"].append({"name": x})
+            tags.append({"name": x})
     if "body" in raw_performer:
-        performer["tags"].append({"name": raw_performer["body"]})
+        tags.append({"name": raw_performer["body"]})
     if "pubic" in raw_performer:
-        performer["tags"].append({"name": raw_performer["pubic"] + " Pubes"})
+        tags.append({"name": raw_performer["pubic"] + " Pubes"})
+    if tags:
+        performer["tags"] = tags
 
     return performer
 
@@ -403,8 +452,8 @@ def to_scraped_group(raw_movie: dict, page_url: str) -> ScrapedGroup:
     if date := raw_movie.get("publish_date"):
         movie["date"] = date[:10].replace("/", "-")
 
-    if duration := raw_movie.get("videos_duration"):
-        movie["duration"] = duration
+    if duration := to_seconds(raw_movie.get("videos_duration")):
+        movie["duration"] = str(duration)
 
     if cover := raw_movie.get("trailer_screencap"):
         movie["front_image"] = cover
@@ -422,14 +471,18 @@ def to_scraped_scene_from_content(raw_scene: dict, page_url: str) -> ScrapedScen
     site = raw_scene["site_domain"]
     scene: ScrapedScene = {}
 
-    if title := raw_scene.get("title"):
-        scene["title"] = title.strip()
+    if title := (raw_scene.get("title") or "").strip():
+        scene["title"] = title
     if date := raw_scene.get("publish_date"):
         scene["date"] = date[:10].replace("/", "-")
-    if details := raw_scene.get("description"):
-        scene["details"] = strip_tags(details)
+    if details := strip_tags(raw_scene.get("description") or ""):
+        scene["details"] = details
     if code := get_code(site, raw_scene):
         scene["code"] = code
+    if duration := to_seconds(raw_scene.get("seconds_duration")) or to_seconds(
+        raw_scene.get("videos_duration")
+    ):
+        scene["duration"] = duration
     if models := raw_scene.get("models_thumbs"):
         scene["performers"] = [
             {
@@ -449,7 +502,9 @@ def to_scraped_scene_from_content(raw_scene: dict, page_url: str) -> ScrapedScen
     # PurgatoryX splits its catalogue into "Heaven" and "Hell" series, tagged
     # as such; StashDB models them as child studios of PurgatoryX
     if site == "purgatoryx.com" and (
-        series := next((t for t in raw_scene.get("tags", []) if t in ("Heaven", "Hell")), None)
+        series := next(
+            (t for t in raw_scene.get("tags", []) if t in ("Heaven", "Hell")), None
+        )
     ):
         scene["studio"] = {"name": series, "parent": get_studio(site, page_url)}
 
@@ -496,16 +551,20 @@ def to_scraped_scene_from_video(raw_scene: dict, page_url: str) -> ScrapedScene:
     site = urllib.parse.urlparse(raw_scene["thumbnail"]["url"]).netloc
     scene: ScrapedScene = {}
 
-    if title := raw_scene.get("title"):
+    if title := (raw_scene.get("title") or "").strip():
         scene["title"] = title
     if date := raw_scene.get("createdAt"):
         scene["date"] = date[:10].replace("/", "-")
-    if details := raw_scene.get("description"):
-        scene["details"] = strip_tags(details)
+    if details := strip_tags(raw_scene.get("description") or ""):
+        scene["details"] = details
     if scene_id := dig(raw_scene, ("id", "_id")):
         scene["code"] = str(scene_id)
+    if duration := to_seconds(raw_scene.get("duration")):
+        scene["duration"] = duration
     if models := raw_scene.get("performers"):
-        scene["performers"] = [ScrapedPerformer(name=x["name"], image=x["avatar"]) for x in models]
+        scene["performers"] = [
+            ScrapedPerformer(name=x["name"], image=x["avatar"]) for x in models
+        ]
     if tags := raw_scene.get("categories"):
         scene["tags"] = [{"name": x["name"]} for x in tags]
 
@@ -525,6 +584,24 @@ def scrape_scene(url: str) -> ScrapedScene | None:
 
     scene: ScrapedScene = {}
     if content := props.get("content"):
+        # Members-only parts of a shoot are public only in the trailer page's
+        # related_scenes, so they're addressed as <trailer url>#<content id>
+        if (
+            (part := urllib.parse.urlparse(url).fragment)
+            and part != str(content["id"])
+            and not (
+                content := next(
+                    (
+                        x
+                        for x in content.get("related_scenes", [])
+                        if str(x["id"]) == part
+                    ),
+                    None,
+                )
+            )
+        ):
+            log.error(f"No related scene with id {part} on this page")
+            return None
         scene = to_scraped_scene_from_content(content, url)
     if video := props.get("video"):
         scene = to_scraped_scene_from_video(video, url)
@@ -552,9 +629,9 @@ if __name__ == "__main__":
     result = None
     match op, args:
         case "scene-by-url", {"url": url} if url:
-            result = scrape_scene(clean_url(url))
+            result = scrape_scene(tour_url(clean_url(url)))
         case "performer-by-url", {"url": url} if url:
-            result = scrape_performer(clean_url(url))
+            result = scrape_performer(tour_url(clean_url(url)))
         case _:
             log.error(f"Invalid operation: {op}")
             sys.exit(1)

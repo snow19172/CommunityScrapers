@@ -7,16 +7,19 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, TypeVar
 from urllib.parse import unquote
 
-import requests
 from py_common import log
 from py_common.cache import cache_to_disk
+from py_common.deps import ensure_requirements
 from py_common.types import (
     ScrapedGallery,
     ScrapedPerformer,
     ScrapedScene,
     ScrapedStudio,
 )
-from py_common.util import dig, scraper_args
+from py_common.util import dig, is_own_url, scraper_args
+
+ensure_requirements("requests")
+import requests
 
 NATS_URL = "https://nats.mygaycash.com"
 NETWORK = "Mars Media"
@@ -99,6 +102,7 @@ def headers_for_domain(domain: str) -> dict[str, str]:
 def image_url(cdn_servers: dict[str, Any], renditions: Mapping[str, Any]) -> str | None:
     if not renditions:
         return None
+
     def rendition_width(size: str) -> int:
         width = size.partition("-")[0]
         return int(width) if width.isdigit() else 0
@@ -139,19 +143,15 @@ def extract_names(cms_set, data_type_name: str) -> list[str]:
 
 def resolve_studio(domain: str, cms_set: Any) -> ScrapedStudio:
     names = extract_names(cms_set, "Studio")
-    studio: ScrapedStudio = {"name": names[0] if names else CONFIG[domain]["studio_name"]}
+    studio: ScrapedStudio = {
+        "name": names[0] if names else CONFIG[domain]["studio_name"]
+    }
     if studio["name"] in NETWORK_STUDIOS:
         studio["parent"] = {"name": NETWORK}
     return studio
 
 
-@cache_to_disk(ttl=86400)
-def get_block_id(domain: str, page_slug: str) -> str | None:
-    """
-    Discovers a usable cms_block_id for a domain by fetching one of its own pages:
-    any block ID a page returns works for querying that content type, so no manual
-    per-domain reverse-engineering is needed (unlike island_dollars.py's CONFIG)
-    """
+def get_page(domain: str, page_slug: str) -> dict[str, Any] | None:
     params = {"cms_area_id": CONFIG[domain]["cms_area_id"], "slug": page_slug}
     headers = headers_for_domain(domain)
     url = f"{NATS_URL}/tour_api.php/content/page"
@@ -161,10 +161,26 @@ def get_block_id(domain: str, page_slug: str) -> str | None:
     except ValueError as e:
         log.error(f"Error parsing JSON response for {domain} page {page_slug}: {e}")
         return None
-    if not (blocks := result.get("blocks")):
+    return result if result.get("cms_page_id") else None
+
+
+@cache_to_disk(ttl=86400)
+def get_block_id(domain: str, page_slug: str) -> str | None:
+    """
+    Discovers a usable cms_block_id for a domain by fetching one of its own pages:
+    any block ID a page returns works for querying that content type, so no manual
+    per-domain reverse-engineering is needed (unlike island_dollars.py's CONFIG)
+    """
+    if not (blocks := (get_page(domain, page_slug) or {}).get("blocks")):
         log.error(f"No blocks found for {domain} page {page_slug}")
         return None
     return blocks[0]["cms_block_id"]
+
+
+@cache_to_disk(ttl=86400)
+def scene_path(domain: str) -> str:
+    # Each tour defines its own scene route; some have moved from /video/ to /scene/
+    return "scene" if get_page(domain, "/scene/:slug") else "video"
 
 
 @cache_to_disk(ttl=600)
@@ -209,7 +225,9 @@ def get_sets(
     headers = headers_for_domain(domain)
     url = f"{NATS_URL}/tour_api.php/content/sets"
     log.debug(f"Searching domain {domain} with params: {search_params}")
-    res = requests.get(url, params=search_params, headers=headers, timeout=REQUESTS_TIMEOUT)
+    res = requests.get(
+        url, params=search_params, headers=headers, timeout=REQUESTS_TIMEOUT
+    )
     try:
         result = res.json()
     except ValueError as e:
@@ -241,7 +259,9 @@ def get_models(
     }
     headers = headers_for_domain(domain)
     url = f"{NATS_URL}/tour_api.php/content/data-values"
-    res = requests.get(url, params=search_params, headers=headers, timeout=REQUESTS_TIMEOUT)
+    res = requests.get(
+        url, params=search_params, headers=headers, timeout=REQUESTS_TIMEOUT
+    )
     try:
         result = res.json()
     except ValueError as e:
@@ -252,7 +272,9 @@ def get_models(
     return []
 
 
-def parse_set_as_scene(domain: str, cms_set: Any, cdn_servers: dict[str, Any]) -> ScrapedScene:
+def parse_set_as_scene(
+    domain: str, cms_set: Any, cdn_servers: dict[str, Any]
+) -> ScrapedScene:
     scene: ScrapedScene = {}
     if title := cms_set.get("name"):
         scene["title"] = title
@@ -261,12 +283,14 @@ def parse_set_as_scene(domain: str, cms_set: Any, cdn_servers: dict[str, Any]) -
         scene["details"] = description.strip()
 
     if slug := cms_set.get("slug"):
-        scene["urls"] = [f"https://tour.{domain}.com/video/{slug}"]
+        scene["urls"] = [f"https://tour.{domain}.com/{scene_path(domain)}/{slug}"]
 
     if added_nice := cms_set.get("added_nice"):
         scene["date"] = added_nice
 
-    if image := image_url(cdn_servers, dig(cms_set, "preview_formatted", "thumb", default={})):
+    if image := image_url(
+        cdn_servers, dig(cms_set, "preview_formatted", "thumb", default={})
+    ):
         scene["image"] = image
 
     scene["studio"] = resolve_studio(domain, cms_set)
@@ -280,7 +304,9 @@ def parse_set_as_scene(domain: str, cms_set: Any, cdn_servers: dict[str, Any]) -
     return scene
 
 
-def parse_set_as_gallery(domain: str, cms_set: Any, cdn_servers: dict[str, Any]) -> ScrapedGallery:
+def parse_set_as_gallery(
+    domain: str, cms_set: Any, cdn_servers: dict[str, Any]
+) -> ScrapedGallery:
     gallery: ScrapedGallery = {}
     if title := cms_set.get("name"):
         gallery["title"] = title
@@ -296,7 +322,9 @@ def parse_set_as_gallery(domain: str, cms_set: Any, cdn_servers: dict[str, Any])
 
     # ScrapedGallery has no image/cover field, but it's useful to know which
     # one this set's cover would be, so just log it rather than dropping it
-    if cover := image_url(cdn_servers, dig(cms_set, "preview_formatted", "thumb", default={})):
+    if cover := image_url(
+        cdn_servers, dig(cms_set, "preview_formatted", "thumb", default={})
+    ):
         log.debug(f"Cover image URL for gallery '{gallery.get('title')}': {cover}")
 
     gallery["studio"] = resolve_studio(domain, cms_set)
@@ -310,7 +338,9 @@ def parse_set_as_gallery(domain: str, cms_set: Any, cdn_servers: dict[str, Any])
     return gallery
 
 
-def parse_model_as_performer(domain: str, cms_data: Any, cdn_servers: dict[str, Any]) -> ScrapedPerformer:
+def parse_model_as_performer(
+    domain: str, cms_data: Any, cdn_servers: dict[str, Any]
+) -> ScrapedPerformer:
     performer: ScrapedPerformer = {"name": cms_data["name"]}
     performer["urls"] = [f"https://tour.{domain}.com/model/{cms_data['slug']}"]
 
@@ -328,7 +358,7 @@ def strip_studio_prefix(domain: str, title: str) -> str:
     # so we strip it text_search isn't polluted by it
     prefix = domain.replace("-", " ")
     if title.lower().startswith(prefix.lower()):
-        return title[len(prefix):].strip(" -")
+        return title[len(prefix) :].strip(" -")
     return title
 
 
@@ -338,7 +368,7 @@ def video_identifier_from_url(url: str, domain: str) -> tuple[str, str] | None:
     if match := re.search(r"[?&]VidID=(\d+)", url):
         return ("id", match.group(1))
 
-    if match := re.search(r"/video/([^/?]+)", url):
+    if match := re.search(r"/(?:video|scene)/([^/?]+)", url):
         value = match.group(1)
         return ("id", value) if value.isdigit() else ("slug", value)
 
@@ -379,9 +409,15 @@ def scene_search(
     def fetch_domain(domain: str) -> list[ScrapedScene]:
         cdn_servers = get_cdn_servers(domain)
         video_sets = get_sets(
-            domain, content_type="video", text_search=query, slug=slug, cms_set_id=cms_set_id
+            domain,
+            content_type="video",
+            text_search=query,
+            slug=slug,
+            cms_set_id=cms_set_id,
         )
-        return [parse_set_as_scene(domain, cms_set, cdn_servers) for cms_set in video_sets]
+        return [
+            parse_set_as_scene(domain, cms_set, cdn_servers) for cms_set in video_sets
+        ]
 
     return gather_by_domain(search_domains, fetch_domain)
 
@@ -399,9 +435,15 @@ def gallery_search(
     def fetch_domain(domain: str) -> list[ScrapedGallery]:
         cdn_servers = get_cdn_servers(domain)
         photo_sets = get_sets(
-            domain, content_type="image", text_search=query, slug=slug, cms_set_id=cms_set_id
+            domain,
+            content_type="image",
+            text_search=query,
+            slug=slug,
+            cms_set_id=cms_set_id,
         )
-        return [parse_set_as_gallery(domain, cms_set, cdn_servers) for cms_set in photo_sets]
+        return [
+            parse_set_as_gallery(domain, cms_set, cdn_servers) for cms_set in photo_sets
+        ]
 
     return gather_by_domain(search_domains, fetch_domain)
 
@@ -418,12 +460,17 @@ def performer_search(
     def fetch_domain(domain: str) -> list[ScrapedPerformer]:
         cdn_servers = get_cdn_servers(domain)
         models = get_models(domain, name=name, slug=slug)
-        return [parse_model_as_performer(domain, cms_data, cdn_servers) for cms_data in models]
+        return [
+            parse_model_as_performer(domain, cms_data, cdn_servers)
+            for cms_data in models
+        ]
 
     return gather_by_domain(search_domains, fetch_domain)
 
 
-def scene_by_url(url: str, search_domains: list[str] | None = None) -> ScrapedScene | None:
+def scene_by_url(
+    url: str, search_domains: list[str] | None = None
+) -> ScrapedScene | None:
     url_domain = domain_from_url(url)
     if not url_domain:
         log.error(f"Could not determine domain from url: {url}")
@@ -445,13 +492,17 @@ def scene_by_url(url: str, search_domains: list[str] | None = None) -> ScrapedSc
             if not results and search_domains:
                 results = scene_search(query=value, search_domains=search_domains)
             if len(results) > 1:
-                log.error(f"Ambiguous title match ({len(results)} results) for '{value}' from {url}")
+                log.error(
+                    f"Ambiguous title match ({len(results)} results) for '{value}' from {url}"
+                )
                 return None
 
     return best_match(results, url)
 
 
-def gallery_by_url(url: str, search_domains: list[str] | None = None) -> ScrapedGallery | None:
+def gallery_by_url(
+    url: str, search_domains: list[str] | None = None
+) -> ScrapedGallery | None:
     if not (url_domain := domain_from_url(url)):
         log.error(f"Could not determine domain from url: {url}")
         return None
@@ -471,7 +522,9 @@ def gallery_by_url(url: str, search_domains: list[str] | None = None) -> Scraped
     return best_match(results, url)
 
 
-def performer_by_url(url: str, search_domains: list[str] | None = None) -> ScrapedPerformer | None:
+def performer_by_url(
+    url: str, search_domains: list[str] | None = None
+) -> ScrapedPerformer | None:
     if not (url_domain := domain_from_url(url)):
         log.error(f"Could not determine domain from url: {url}")
         return None
@@ -486,7 +539,9 @@ def performer_by_url(url: str, search_domains: list[str] | None = None) -> Scrap
     return best_match(results, url)
 
 
-def get_matching_scene(fragment, search_results: list[ScrapedScene]) -> ScrapedScene | None:
+def get_matching_scene(
+    fragment, search_results: list[ScrapedScene]
+) -> ScrapedScene | None:
     return next(
         (
             r
@@ -501,34 +556,43 @@ def get_matching_scene(fragment, search_results: list[ScrapedScene]) -> ScrapedS
 def scene_from_fragment(
     fragment, search_domains: list[str] | None = None
 ) -> ScrapedScene | None:
-    if not fragment:
-        log.error("No fragment provided")
+    for url in fragment.get("urls") or []:
+        if (
+            is_own_url(url)
+            and re.search(r"/(?:video|updates|trailers)/", url)
+            and (scene := scene_by_url(url, search_domains=search_domains))
+        ):
+            return scene
+    if not (title := fragment.get("title")):
+        log.error("Cannot scrape scene without a scene URL or title")
         return None
-    search_results = scene_search(fragment.get("title"), search_domains=search_domains)
-    match = get_matching_scene(fragment, search_results)
-
-    if (
-        match
-        and (url_domain := domain_from_url(fragment.get("url", "")))
-        and (slug_match := re.search(r"/video/([^/?]+)", fragment.get("url", "")))
-    ):
-        match["urls"] = [f"https://tour.{url_domain}.com/video/{slug_match.group(1)}"]
-
-    return match
+    return get_matching_scene(
+        fragment, scene_search(title, search_domains=search_domains)
+    )
 
 
-def get_matching_performer(fragment, search_results: list[ScrapedPerformer]) -> ScrapedPerformer | None:
+def get_matching_performer(
+    fragment, search_results: list[ScrapedPerformer]
+) -> ScrapedPerformer | None:
     return next((r for r in search_results if r["name"] == fragment["name"]), None)
 
 
 def performer_from_fragment(
     fragment, search_domains: list[str] | None = None
 ) -> ScrapedPerformer | None:
-    if not fragment:
-        log.error("No fragment provided")
+    for url in fragment.get("urls") or []:
+        if (
+            is_own_url(url)
+            and "/model/" in url
+            and (performer := performer_by_url(url, search_domains=search_domains))
+        ):
+            return performer
+    if not (name := fragment.get("name")):
+        log.error("Cannot scrape performer without a model URL or name")
         return None
-    search_results = performer_search(fragment.get("name"), search_domains=search_domains)
-    return get_matching_performer(fragment, search_results)
+    return get_matching_performer(
+        fragment, performer_search(name, search_domains=search_domains)
+    )
 
 
 if __name__ == "__main__":

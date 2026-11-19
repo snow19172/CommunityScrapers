@@ -1,0 +1,153 @@
+name: "VRBangers"
+
+sceneByURL:
+  - action: scrapeXPath
+    url: &urls
+      - /arporn.com
+      - .arporn.com
+      - blowvr.com
+      - vrbangers.com
+      - vrbgay.com
+      - vrbtrans.com
+      - vrconk.com
+    scraper: vrbScraper
+galleryByURL:
+  - action: scrapeXPath
+    url: *urls
+    scraper: vrbScraper
+groupByURL:
+  - action: scrapeXPath
+    url:
+      - vrbangers.com
+    scraper: vrbScraper
+performerByURL:
+  - action: scrapeXPath
+    url: *urls
+    scraper: vrbScraper
+sceneByFragment:
+  action: scrapeXPath
+  # url format: https://{studio}.com/video/{title}
+  queryURL: "{filename}"
+  queryURLReplace:
+    # filename format:
+    #   {studio}_{title}_{res}_{vrtype}.{ext}
+    #     res: oculus|\d+k
+    #     vrtype: stuff we do not care about but could contain '_'
+    filename:
+      - regex: (?i)^(vrbangers|vrbgay|vrbtrans|vrconk)_(.+)_(?:oculus|\dk)_.+$
+        with: https://$1.com/video/$2
+      # Titles have spaces replaced with '_' and the url expects '-' instead of spaces
+      - regex: _
+        with: "-"
+  scraper: vrbScraper
+
+xPathScrapers:
+  vrbScraper:
+    common:
+      $info: //div[starts-with(@class,"video-item__info ")]|//div[@class="single-video-info"]
+      $secondText: //div[contains(@class,"second-text")]/div//text()
+      $videoDescription: //div[contains(@class,"single-video-description")]/div//p
+      $modelInfoItem: //div[contains(@class, "single-model-profile__info-wrapper")]//div[@class="single-model-profile__info-item"]|//div[contains(@class, "single-model-profile")]//li[@class="model-info-item"]
+      $modelLinks: //div[contains(@class, "single-model-profile__actions")]
+    scene:
+      Title: &titleAttr
+        selector: &titleSel //h1
+        postProcess:
+          - replace:
+              - regex: (Gay|Trans) VR Porn Video$
+                with: ""
+      Date: &dateAttr
+        selector: //script[@type="application/ld+json"]
+        postProcess:
+          - replace:
+              - regex: (?s).*"datePublished":"(\d{4}-\d{2}-\d{2}).*
+                with: $1
+              # drop the raw JSON rather than pass it through if the field is absent
+              - regex: (?s)^\{.*
+                with: ""
+      Details: &detailsAttr
+        selector: $secondText | $videoDescription | //meta[@name="description"][not($secondText)][not($videoDescription)]/@content
+        concat: "\n\n"
+      Tags: &tagsAttr
+        Name: //div[@data-testid="video-categories-list"]/a[contains(@href,"category/")]|//div[@class="single-video-categories"]//a[contains(@href,"category/")]
+      Performers: &performersAttr
+        Name: //div[starts-with(@class, 'video-item__info-starring')]//a|//div[contains(@class, "single-video-info__starring")]//a
+      Studio: &studioAttr
+        Name: &studioName
+          selector: &studioURLSel //meta[@name="dl8-customization-brand-url"]/@content
+          postProcess:
+            - replace:
+                - regex: ^//
+                  with: ""
+            - map:
+                arporn.com: AR Porn
+                blowvr.com: Blow VR
+                vrbangers.com: VR Bangers
+                vrbgay.com: VRB Gay
+                vrbtrans.com: VRB Trans
+                vrconk.com: VR Conk
+        URLs: &studioURL
+          selector: *studioURLSel
+          postProcess:
+            - replace:
+                - regex: ^
+                  with: "https:"
+      Image: &imageSel //div[contains(@class, "single-video-poster__preview")]/img/@src|//meta[@property="og:image"]/@content
+      URLs: //link[@rel="canonical"]/@href
+    gallery:
+      Title: *titleAttr
+      Date: *dateAttr
+      Details: *detailsAttr
+      Tags: *tagsAttr
+      Performers: *performersAttr
+      Studio: *studioAttr
+    group:
+      Name:
+        selector: *titleSel
+        postProcess:
+          - replace:
+              - regex: ^
+                with: "VRBangers - "
+      Duration:
+        # the value sits in a sibling <span>, not a bare text node
+        selector: $info//span[contains(text(),"Duration:")]/following-sibling::span|$info//span[contains(text(),"Duration:")]/following-sibling::text()
+        postProcess:
+          - replace:
+              - regex: \smin
+                with: ":00"
+      Date: *dateAttr
+      Synopsis: *detailsAttr
+      Studio:
+        Name: *studioName
+        URLs: *studioURL
+      FrontImage: *imageSel
+    performer:
+      Name:
+        selector: *titleSel
+        postProcess:
+          - replace:
+              - regex: " (AR|VR).*$"
+                with: ""
+      Images: //div[contains(@class, "single-model-profile__image app-image")]/img/@src
+      Birthdate:
+        selector: $modelInfoItem/span[text()="Birthday:"]/following-sibling::span
+        postProcess:
+          - parseDate: January 2
+      Measurements: $modelInfoItem/span[text()="Measurements:"]/following-sibling::span
+      Height: $modelInfoItem/span[text()="Height:"]/following-sibling::span
+      Weight: $modelInfoItem/span[text()="Weight:"]/following-sibling::span
+      Tattoos: $modelInfoItem/span[text()="Tatoos:"]/following-sibling::span
+      Piercings: $modelInfoItem/span[text()="Piercings:"]/following-sibling::span
+      Country: $modelInfoItem/span[text()="Country of origin:"]/following-sibling::span
+      Ethnicity: $modelInfoItem/span[text()="Ethnicity:"]/following-sibling::span
+      EyeColor: $modelInfoItem/span[text()="Eye Color:"]/following-sibling::span
+      HairColor: $modelInfoItem/span[text()="Hair Color:"]/following-sibling::span
+      Aliases: $modelInfoItem/span[text()="Aka:"]/following-sibling::span
+      URLs: >
+        //link[@rel="canonical"]/@href
+        | $modelLinks/a[contains(@href, "instagram")]/@href
+        | $modelLinks/a[contains(@href, "twitter")]/@href
+
+# you can use (a suitably configured) CDP to make use of a proxy/VPN to bypass region-based age-restriction
+# driver:
+#   useCDP: true

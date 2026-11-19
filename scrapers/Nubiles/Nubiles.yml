@@ -127,6 +127,60 @@ galleryByURL:
       - nubiles.net/photo/gallery/
       - smashed.xxx/photo/gallery/
 
+performerByURL:
+  - action: scrapeXPath
+    scraper: performerScraper
+    url:
+      - anilos.com/model/profile/
+      - badteenspunished.com/model/profile/
+      - bountyhunterporn.com/model/profile/
+      - brattymilf.com/model/profile/
+      - brattysis.com/model/profile/
+      - caughtmycoach.com/model/profile/
+      - cheatingmommy.com/model/profile/
+      - cheatingsis.com/model/profile/
+      - cumswappingsis.com/model/profile/
+      - daddyslilangel.com/model/profile/
+      - datingmystepson.com/model/profile/
+      - deeplush.com/model/profile/
+      - detentiongirls.com/model/profile/
+      - driverxxx.com/model/profile/
+      - familyswap.xxx/model/profile/
+      - girlsonlyporn.com/model/profile/
+      - glowingdesire.com/model/profile/
+      - hotcrazymess.com/model/profile/
+      - imnotyourmommy.com/model/profile/
+      - lilsis.com/model/profile/
+      - momlover.com/model/profile/
+      - momsboytoy.com/model/profile/
+      - momsfamilysecrets.com/model/profile/
+      - momsteachsex.com/model/profile/
+      - momstight.com/model/profile/
+      - momswapped.com/model/profile/
+      - momwantscreampie.com/model/profile/
+      - momwantstobreed.com/model/profile/
+      - myfamilypies.com/model/profile/
+      - nfbusty.com/model/profile/
+      - nubilefilms.com/model/profile/
+      - nubiles-casting.com/model/profile/
+      - nubiles-porn.com/model/profile/
+      - nubiles.net/model/profile/
+      - nubileset.com/model/profile/
+      - nubilesporn.com/model/profile/
+      - nubilesunscripted.com/model/profile/
+      - petiteballerinasfucked.com/model/profile/
+      - petitehdporn.com/model/profile/
+      - princesscum.com/model/profile/
+      - realitysis.com/model/profile/
+      - shesbreedingmaterial.com/model/profile/
+      - shesinmybed.com/model/profile/
+      - smashed.xxx/model/profile/
+      - stepsiblingscaught.com/model/profile/
+      - teacherfucksteens.com/model/profile/
+      - thatsitcomshow.com/model/profile/
+      - thepovgod.com/model/profile/
+      - youngermommy.com/model/profile/
+
 xPathScrapers:
   # Nubiles Porn sites
   nubilesPornMultiScraper:
@@ -134,23 +188,23 @@ xPathScrapers:
       $contentpane: //div[contains(@class, "content-pane-title")]
 
     scene:
-      Title: &titleSelector //h2/text()
+      Title: &titleSelector //h2
       Code: &codeSelector $contentpane//div[contains(@class,"star-rating-wrapper")]/@data-id
       Date: &dateAttr
-        selector: $contentpane//span[@class="date"]/text()
+        selector: $contentpane//span[@class="date"]
         postProcess:
           - parseDate: Jan 2, 2006
       Details: &detailsAttr
         selector: //div[contains(@class, "content-pane-column")]//p/text()|//div[contains(@class, "content-pane-column")]/div/text()|//div[contains(@class, "content-pane-column")]/div/div/text()
         concat: "\n\n"
       Performers: &performersAttr
-        Name: //div[@class="content-pane-performers"]/a/text()
+        Name: //div[@class="content-pane-performers"]/a
       Studio: &studioFromSiteLinkAttr
         Name:
           selector: >-
-            $contentpane//a[@class="site-link"]/text() |
-            $contentpane//span[@class="site-link"]/text() |
-            //title/text()[not($contentpane//*[@class="site-link"])]
+            $contentpane//a[@class="site-link"] |
+            $contentpane//span[@class="site-link"] |
+            //title[not($contentpane//*[@class="site-link"])]
           postProcess:
             - replace:
                 - regex: ^([^-]+?)\s-\s.*$
@@ -175,7 +229,7 @@ xPathScrapers:
                 Shes Breeding Material: She's Breeding Material
                 Shes In My Bed: She's in My Bed
       Tags: &tagsAttr
-        Name: //div[@class="categories"]/a/text()
+        Name: //div[@class="categories"]/a
       Image: &imageAttr
         # Newer scenes have video elements with a poster attribute
         # but older scenes still have an image element
@@ -248,7 +302,7 @@ xPathScrapers:
       Performers: *performersAttr
       Studio: &studioFromTitleAttr
         Name:
-          selector: //title/text()
+          selector: //title
           postProcess:
             - replace:
                 - regex: ^(.+?)\s-.+$
@@ -267,6 +321,30 @@ xPathScrapers:
       Performers: *performersAttr
       Tags: *tagsAttr
       Studio: *studioFromTitleAttr
+
+  performerScraper:
+    common:
+      $profile: //div[contains(@class, "model-profile-desc")]
+      $field: //div[contains(@class, "model-profile-desc")]/p[@class="model-profile-subheading"]
+    performer:
+      Name: $profile/h2
+      URLs: //link[@rel="canonical"]/@href
+      Images: //img[contains(@class, "model-profile-pic")]/@src
+      Gender:
+        selector: >-
+          $field[normalize-space()="Figure"] |
+          $profile[not(p[normalize-space()="Figure"])]/p[normalize-space()="Location"]
+        postProcess:
+          - map:
+              Figure: Female
+              Location: Male
+      Country: $field[normalize-space()="Location"]/following-sibling::p[1]
+      Height:
+        selector: $field[normalize-space()="Height"]/following-sibling::p[1]
+        postProcess:
+          - feetToCm: true
+      Measurements: $field[normalize-space()="Figure"]/following-sibling::p[1]
+      Details: //p[contains(@class, "model-bio")]
 
 driver:
   headers:
